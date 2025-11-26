@@ -294,6 +294,7 @@ class WeaveOtelLogger(OpenTelemetry):
 
         return WeaveOtelConfig(
             otlp_auth_headers=otlp_auth_headers,
+            endpoint=endpoint,
             project_id=project_id,
             protocol="otlp_http",
         )

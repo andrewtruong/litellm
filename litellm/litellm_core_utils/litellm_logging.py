@@ -3787,9 +3787,9 @@ def _init_custom_logger_compatible_class(  # noqa: PLR0915
 
             weave_otel_config = WeaveOtelLogger.get_weave_otel_config()
 
-            # The endpoint and headers are now set as environment variables by get_weave_otel_config()
             otel_config = OpenTelemetryConfig(
                 exporter=weave_otel_config.protocol,
+                endpoint=weave_otel_config.endpoint,
                 headers=weave_otel_config.otlp_auth_headers,
             )
 

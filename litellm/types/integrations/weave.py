@@ -15,6 +15,7 @@ class WeaveOtelConfig(BaseModel):
     """Configuration for Weave OpenTelemetry integration."""
 
     otlp_auth_headers: str | None = None
+    endpoint: str | None = None
     project_id: str | None = None
     protocol: Protocol = "otlp_http"
 

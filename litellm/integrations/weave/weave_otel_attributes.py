@@ -86,31 +86,55 @@ class WeaveLLMObsOTELAttributes(BaseLLMObsOTELAttributes):
     Weave-specific LLM observability OTEL attributes.
 
     Weave automatically maps attributes from multiple frameworks including
-    GenAI, OpenInference, Langfuse, and others.
+    GenAI, OpenInference, Langfuse, and others. We use OpenInference conventions
+    (input.value, output.value, llm.*) which Weave recognizes.
     """
 
     @staticmethod
     @override
     def set_messages(span: Span, kwargs: dict[str, Any]):
-        """Set input messages as span attributes."""
-        prompt: dict[str, Any] = {"messages": kwargs.get("messages")}
+        """Set input messages as span attributes using OpenInference conventions."""
+        from litellm.types.integrations.weave import WeaveSpanAttributes
+
+        messages = kwargs.get("messages", [])
         optional_params = kwargs.get("optional_params", {})
+
+        # Set input.value - recognized by Weave for inputs
+        prompt: dict[str, Any] = {"messages": messages}
         functions = optional_params.get("functions")
         tools = optional_params.get("tools")
         if functions is not None:
             prompt["functions"] = functions
         if tools is not None:
             prompt["tools"] = tools
+        safe_set_attribute(span, WeaveSpanAttributes.INPUT_VALUE.value, json.dumps(prompt))
 
-        input_data = prompt
-        safe_set_attribute(span, "weave.observation.input", json.dumps(input_data))
+        # Set individual input messages in OpenInference format
+        for idx, msg in enumerate(messages):
+            prefix = f"{WeaveSpanAttributes.LLM_INPUT_MESSAGES.value}.{idx}"
+            safe_set_attribute(span, f"{prefix}.message.role", msg.get("role", ""))
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = json.dumps(content)
+            safe_set_attribute(span, f"{prefix}.message.content", content)
 
     @staticmethod
     @override
     def set_response_output_messages(span: Span, response_obj):
-        """Set response output as span attributes."""
+        """Set response output as span attributes using OpenInference conventions."""
+        from litellm.types.integrations.weave import WeaveSpanAttributes
+
+        # Set output.value - recognized by Weave for outputs
         safe_set_attribute(
             span,
-            "weave.observation.output",
+            WeaveSpanAttributes.OUTPUT_VALUE.value,
             get_output_content_by_type(response_obj),
         )
+
+        # Set individual output messages in OpenInference format
+        if response_obj and hasattr(response_obj, "get"):
+            for idx, choice in enumerate(response_obj.get("choices", [])):
+                message = choice.get("message", {})
+                prefix = f"{WeaveSpanAttributes.LLM_OUTPUT_MESSAGES.value}.{idx}"
+                safe_set_attribute(span, f"{prefix}.message.role", message.get("role", ""))
+                safe_set_attribute(span, f"{prefix}.message.content", message.get("content", ""))

@@ -26,24 +26,40 @@ class WeaveSpanAttributes(str, Enum):
 
     Based on Weave's OTEL integration documentation:
     https://docs.wandb.ai/weave/guides/tracking/otel
+
+    Weave maps attributes from multiple frameworks. We use OpenInference
+    conventions (input.value, output.value, llm.*) which Weave recognizes.
     """
 
-    # ---- Thread organization ----
+    # ---- Thread organization (Weave-specific) ----
     THREAD_ID = "wandb.thread_id"
     IS_TURN = "wandb.is_turn"
+    DISPLAY_NAME = "wandb.display_name"
 
-    # ---- Observation input/output ----
-    # Weave maps these from various frameworks including Langfuse attributes
-    OBSERVATION_INPUT = "weave.observation.input"
-    OBSERVATION_OUTPUT = "weave.observation.output"
+    # ---- Input/Output (OpenInference - recognized by Weave) ----
+    INPUT_VALUE = "input.value"
+    OUTPUT_VALUE = "output.value"
+
+    # ---- LLM attributes (OpenInference - recognized by Weave) ----
+    LLM_MODEL_NAME = "llm.model_name"
+    LLM_PROVIDER = "llm.provider"
+    LLM_INVOCATION_PARAMETERS = "llm.invocation_parameters"
+    LLM_INPUT_MESSAGES = "llm.input_messages"
+    LLM_OUTPUT_MESSAGES = "llm.output_messages"
+
+    # ---- Token counts (OpenInference - recognized by Weave) ----
+    LLM_TOKEN_COUNT_PROMPT = "llm.token_count.prompt"
+    LLM_TOKEN_COUNT_COMPLETION = "llm.token_count.completion"
+    LLM_TOKEN_COUNT_TOTAL = "llm.token_count.total"
+
+    # ---- Span kind (recognized by Weave) ----
+    OPENINFERENCE_SPAN_KIND = "openinference.span.kind"
 
     # ---- Trace-level metadata ----
     TRACE_USER_ID = "user.id"
     SESSION_ID = "session.id"
-    TRACE_NAME = "weave.trace.name"
-    TRACE_ID = "weave.trace.id"
-    TRACE_METADATA = "weave.trace.metadata"
+    METADATA = "metadata"
 
     # ---- Generation-level metadata ----
-    GENERATION_NAME = "weave.generation.name"
-    GENERATION_ID = "weave.generation.id"
+    GENERATION_NAME = "gen_ai.operation.name"
+    GENERATION_ID = "gen_ai.response.id"

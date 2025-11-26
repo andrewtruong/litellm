@@ -86,147 +86,120 @@ class WeaveOtelLogger(OpenTelemetry):
     def _set_metadata_attributes(span: Span, metadata: dict):
         """Helper to set metadata attributes from mapping."""
         from litellm.integrations.arize._utils import safe_set_attribute
+        from litellm.litellm_core_utils.safe_json_dumps import safe_dumps
 
-        mapping = {
+        # Weave-specific attributes
+        weave_mapping = {
             "thread_id": WeaveSpanAttributes.THREAD_ID,
             "is_turn": WeaveSpanAttributes.IS_TURN,
-            "trace_user_id": WeaveSpanAttributes.TRACE_USER_ID,
-            "session_id": WeaveSpanAttributes.SESSION_ID,
-            "trace_name": WeaveSpanAttributes.TRACE_NAME,
-            "trace_id": WeaveSpanAttributes.TRACE_ID,
-            "trace_metadata": WeaveSpanAttributes.TRACE_METADATA,
-            "generation_name": WeaveSpanAttributes.GENERATION_NAME,
-            "generation_id": WeaveSpanAttributes.GENERATION_ID,
+            "display_name": WeaveSpanAttributes.DISPLAY_NAME,
         }
 
-        for key, enum_attr in mapping.items():
+        # Standard attributes recognized by Weave
+        standard_mapping = {
+            "trace_user_id": WeaveSpanAttributes.TRACE_USER_ID,
+            "user_id": WeaveSpanAttributes.TRACE_USER_ID,
+            "session_id": WeaveSpanAttributes.SESSION_ID,
+        }
+
+        for key, enum_attr in {**weave_mapping, **standard_mapping}.items():
             if key in metadata and metadata[key] is not None:
                 value = metadata[key]
                 if isinstance(value, (list, dict)):
-                    try:
-                        value = json.dumps(value)
-                    except Exception:
-                        value = str(value)
+                    value = safe_dumps(value)
                 safe_set_attribute(span, enum_attr.value, value)
 
+        # Set general metadata as JSON
+        if metadata:
+            safe_set_attribute(span, WeaveSpanAttributes.METADATA.value, safe_dumps(metadata))
+
     @staticmethod
-    def _set_observation_output(span: Span, response_obj):
-        """Helper to set observation output attributes."""
+    def _set_token_usage(span: Span, response_obj):
+        """Helper to set token usage attributes using OpenInference conventions."""
         from litellm.integrations.arize._utils import safe_set_attribute
-        from litellm.litellm_core_utils.safe_json_dumps import safe_dumps
 
         if not response_obj or not hasattr(response_obj, "get"):
             return
 
-        choices = response_obj.get("choices", [])
-        if choices:
-            first_choice = choices[0]
-            message = first_choice.get("message", {})
-            tool_calls = message.get("tool_calls")
-            if tool_calls:
-                transformed_tool_calls = []
-                for tool_call in tool_calls:
-                    function = tool_call.get("function", {})
-                    arguments_str = function.get("arguments", "{}")
-                    try:
-                        arguments_obj = (
-                            json.loads(arguments_str)
-                            if isinstance(arguments_str, str)
-                            else arguments_str
-                        )
-                    except json.JSONDecodeError:
-                        arguments_obj = {}
-                    weave_tool_call = {
-                        "id": response_obj.get("id", ""),
-                        "name": function.get("name", ""),
-                        "call_id": tool_call.get("id", ""),
-                        "type": "function_call",
-                        "arguments": arguments_obj,
-                    }
-                    transformed_tool_calls.append(weave_tool_call)
-                safe_set_attribute(
-                    span,
-                    WeaveSpanAttributes.OBSERVATION_OUTPUT.value,
-                    safe_dumps(transformed_tool_calls),
-                )
-            else:
-                output_data = {}
-                if message.get("role"):
-                    output_data["role"] = message.get("role")
-                if message.get("content") is not None:
-                    output_data["content"] = message.get("content")
-                if output_data:
-                    safe_set_attribute(
-                        span,
-                        WeaveSpanAttributes.OBSERVATION_OUTPUT.value,
-                        safe_dumps(output_data),
-                    )
+        usage = response_obj.get("usage")
+        if usage:
+            prompt_tokens = usage.get("prompt_tokens") or usage.get("input_tokens")
+            completion_tokens = usage.get("completion_tokens") or usage.get("output_tokens")
+            total_tokens = usage.get("total_tokens")
 
-        # Handle ResponsesAPI output format
-        output = response_obj.get("output", [])
-        if output:
-            output_items_data: list[dict] = []
-            for item in output:
-                if hasattr(item, "type"):
-                    item_type = item.type
-                    if item_type == "reasoning" and hasattr(item, "summary"):
-                        for summary in item.summary:
-                            if hasattr(summary, "text"):
-                                output_items_data.append(
-                                    {"role": "reasoning_summary", "content": summary.text}
-                                )
-                    elif item_type == "message":
-                        output_items_data.append(
-                            {
-                                "role": getattr(item, "role", "assistant"),
-                                "content": getattr(
-                                    getattr(item, "content", [{}])[0], "text", ""
-                                ),
-                            }
-                        )
-                    elif item_type == "function_call":
-                        arguments_str = getattr(item, "arguments", "{}")
-                        arguments_obj = (
-                            json.loads(arguments_str)
-                            if isinstance(arguments_str, str)
-                            else arguments_str
-                        )
-                        weave_tool_call = {
-                            "id": getattr(item, "id", ""),
-                            "name": getattr(item, "name", ""),
-                            "call_id": getattr(item, "call_id", ""),
-                            "type": "function_call",
-                            "arguments": arguments_obj,
-                        }
-                        output_items_data.append(weave_tool_call)
-            if output_items_data:
-                safe_set_attribute(
-                    span,
-                    WeaveSpanAttributes.OBSERVATION_OUTPUT.value,
-                    safe_dumps(output_items_data),
-                )
+            if prompt_tokens is not None:
+                safe_set_attribute(span, WeaveSpanAttributes.LLM_TOKEN_COUNT_PROMPT.value, prompt_tokens)
+            if completion_tokens is not None:
+                safe_set_attribute(span, WeaveSpanAttributes.LLM_TOKEN_COUNT_COMPLETION.value, completion_tokens)
+            if total_tokens is not None:
+                safe_set_attribute(span, WeaveSpanAttributes.LLM_TOKEN_COUNT_TOTAL.value, total_tokens)
 
     @staticmethod
     def _set_weave_specific_attributes(span: Span, kwargs, response_obj):
         """
         Sets Weave-specific metadata attributes onto the OTEL span.
 
-        Weave supports thread organization via wandb.thread_id and wandb.is_turn
-        attributes, as well as standard trace metadata.
+        Based on Weave's OTEL attribute mappings from:
+        https://github.com/wandb/weave/blob/master/weave/trace_server/opentelemetry/constants.py
+
+        Weave maps these attributes to its internal model:
+        - "model": gen_ai.response.model, llm.model_name, ai.model.id
+        - "provider": llm.provider, ai.model.provider
+        - "kind": openinference.span.kind, weave.span.kind, traceloop.span.kind
+        - "model_parameters": gen_ai.request, llm.invocation_parameters
         """
         from litellm.integrations.arize._utils import safe_set_attribute
         from litellm.litellm_core_utils.safe_json_dumps import safe_dumps
 
+        # Set metadata attributes (thread_id, session_id, etc.)
         metadata = WeaveOtelLogger._extract_weave_metadata(kwargs)
         WeaveOtelLogger._set_metadata_attributes(span=span, metadata=metadata)
 
-        messages = kwargs.get("messages")
-        if messages:
-            safe_set_attribute(
-                span, WeaveSpanAttributes.OBSERVATION_INPUT.value, safe_dumps(messages)
-            )
+        # Get model and provider info
+        litellm_params = kwargs.get("litellm_params", {}) or {}
+        model = kwargs.get("model", "")
+        custom_llm_provider = litellm_params.get("custom_llm_provider", "")
+        optional_params = kwargs.get("optional_params", {})
 
-        WeaveOtelLogger._set_observation_output(span=span, response_obj=response_obj)
+        # === Weave "model" attribute ===
+        # Maps from: gen_ai.response.model, llm.model_name, ai.model.id
+        if model:
+            safe_set_attribute(span, "llm.model_name", model)
+            safe_set_attribute(span, "gen_ai.response.model", model)
+
+        # === Weave "provider" attribute ===
+        # Maps from: llm.provider, ai.model.provider
+        if custom_llm_provider:
+            safe_set_attribute(span, "llm.provider", custom_llm_provider)
+
+        # === Weave "kind" attribute ===
+        # Maps from: openinference.span.kind, weave.span.kind, traceloop.span.kind
+        safe_set_attribute(span, "openinference.span.kind", "LLM")
+
+        # === Weave "model_parameters" attribute ===
+        # Maps from: gen_ai.request, llm.invocation_parameters
+        if optional_params:
+            # Filter out sensitive fields
+            params_to_log = {k: v for k, v in optional_params.items() if k != "secret_fields"}
+            safe_set_attribute(span, "llm.invocation_parameters", safe_dumps(params_to_log))
+
+        # === Weave display_name ===
+        # wandb.display_name controls the UI display name
+        display_name = metadata.get("display_name")
+        if not display_name and model:
+            if custom_llm_provider:
+                display_name = f"{custom_llm_provider}/{model}"
+            else:
+                display_name = model
+        if display_name:
+            safe_set_attribute(span, "wandb.display_name", display_name)
+
+        # Set token usage
+        WeaveOtelLogger._set_token_usage(span=span, response_obj=response_obj)
+
+        # Set response ID if available
+        if response_obj and hasattr(response_obj, "get") and response_obj.get("id"):
+            safe_set_attribute(span, "gen_ai.response.id", response_obj.get("id"))
 
     @staticmethod
     def _get_weave_host() -> str | None:
